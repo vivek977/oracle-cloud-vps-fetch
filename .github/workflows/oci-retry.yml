@@ -1,0 +1,79 @@
+name: OCI SOCKS5 Instance Retry
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 minutes
+  workflow_dispatch:           # also allows manual trigger
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install OCI CLI
+        run: pip install oci-cli --quiet
+
+      - name: Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/key.pem
+          chmod 600 ~/.oci/key.pem
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY }}
+          region=us-chicago-1
+          key_file=/home/runner/.oci/key.pem
+          EOF
+
+      - name: Check if instance already running
+        id: check
+        run: |
+          COUNT=$(oci compute instance list \
+            --compartment-id "${{ secrets.OCI_TENANCY }}" \
+            --display-name "socks5-oci-1" \
+            --lifecycle-state RUNNING \
+            --query 'length(data)' 2>/dev/null | tr -d '"' || echo "0")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "Existing running instances: $COUNT"
+
+      - name: Try all ADs
+        if: steps.check.outputs.count == '0'
+        run: |
+          SUCCESS=false
+          for AD in "RIZS:US-CHICAGO-1-AD-1" "RIZS:US-CHICAGO-1-AD-2" "RIZS:US-CHICAGO-1-AD-3"; do
+            echo "$(date) — trying $AD..."
+            RESULT=$(oci compute instance launch \
+              --availability-domain "$AD" \
+              --compartment-id "${{ secrets.OCI_TENANCY }}" \
+              --shape "VM.Standard.A1.Flex" \
+              --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+              --image-id "${{ secrets.OCI_IMG }}" \
+              --subnet-id "${{ secrets.OCI_SUBNET }}" \
+              --assign-public-ip true \
+              --display-name "socks5-oci-1" \
+              --ssh-authorized-keys-file <(echo "${{ secrets.OCI_SSH_KEY }}") 2>&1)
+
+            if echo "$RESULT" | grep -q "Out of host capacity\|InternalError"; then
+              echo "No capacity in $AD"
+            else
+              echo "========================================="
+              echo "  INSTANCE CREATED SUCCESSFULLY!"
+              echo "========================================="
+              echo "$RESULT"
+              echo "-----------------------------------------"
+              echo "Check OCI Console for the public IP."
+              echo "SSH: ssh -i oci_key ubuntu@<public-ip>"
+              SUCCESS=true
+              break
+            fi
+          done
+
+          if [ "$SUCCESS" = false ]; then
+            echo "All ADs out of capacity — will retry in 10 minutes."
+          fi
+
+      - name: Already running
+        if: steps.check.outputs.count != '0'
+        run: echo "Instance already exists and is RUNNING. Disable this workflow."
