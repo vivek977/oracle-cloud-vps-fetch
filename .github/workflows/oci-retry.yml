@@ -30,11 +30,12 @@ jobs:
       - name: Check if instance already running
         id: check
         run: |
-          COUNT=$(oci compute instance list \
+          RAW=$(oci compute instance list \
             --compartment-id "${{ secrets.OCI_TENANCY }}" \
             --display-name "socks5-oci-1" \
-            --lifecycle-state RUNNING \
-            --query 'length(data)' 2>/dev/null | tr -d '"' || echo "0")
+            --lifecycle-state RUNNING 2>/dev/null || echo '{"data":[]}')
+          COUNT=$(echo "$RAW" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(len(d.get('data', [])))" 2>/dev/null || echo "0")
+          COUNT=${COUNT:-0}
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "Existing running instances: $COUNT"
 
@@ -75,5 +76,5 @@ jobs:
           fi
 
       - name: Already running
-        if: steps.check.outputs.count != '0'
+        if: steps.check.outputs.count != '0' && steps.check.outputs.count != ''
         run: echo "Instance already exists and is RUNNING. Disable this workflow."
