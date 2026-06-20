@@ -27,54 +27,64 @@ jobs:
           key_file=/home/runner/.oci/key.pem
           EOF
 
-      - name: Check if instance already running
+      - name: Check running instances
         id: check
         run: |
           RAW=$(oci compute instance list \
             --compartment-id "${{ secrets.OCI_TENANCY }}" \
-            --display-name "socks5-oci-1" \
             --lifecycle-state RUNNING 2>/dev/null || echo '{"data":[]}')
-          COUNT=$(echo "$RAW" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(len(d.get('data', [])))" 2>/dev/null || echo "0")
+          COUNT=$(echo "$RAW" | python3 -c "
+import sys, json
+d = json.loads(sys.stdin.read())
+socks = [i for i in d.get('data', []) if i.get('display-name','').startswith('socks5-oci-')]
+print(len(socks))
+" 2>/dev/null || echo "0")
           COUNT=${COUNT:-0}
           echo "count=$COUNT" >> $GITHUB_OUTPUT
-          echo "Existing running instances: $COUNT"
+          echo "Running SOCKS5 instances: $COUNT / 2 target"
 
       - name: Try all ADs
-        if: steps.check.outputs.count == '0'
+        if: steps.check.outputs.count != '2'
         run: |
-          SUCCESS=false
-          for AD in "RIZS:US-CHICAGO-1-AD-1" "RIZS:US-CHICAGO-1-AD-2" "RIZS:US-CHICAGO-1-AD-3"; do
-            echo "$(date) — trying $AD..."
-            RESULT=$(oci compute instance launch \
-              --availability-domain "$AD" \
-              --compartment-id "${{ secrets.OCI_TENANCY }}" \
-              --shape "VM.Standard.A1.Flex" \
-              --shape-config '{"ocpus":1,"memoryInGBs":6}' \
-              --image-id "${{ secrets.OCI_IMG }}" \
-              --subnet-id "${{ secrets.OCI_SUBNET }}" \
-              --assign-public-ip true \
-              --display-name "socks5-oci-1" \
-              --ssh-authorized-keys-file <(echo "${{ secrets.OCI_SSH_KEY }}") 2>&1) || true
+          CURRENT=${{ steps.check.outputs.count }}
+          CURRENT=${CURRENT:-0}
+          NEEDED=$((2 - CURRENT))
+          echo "Need to create $NEEDED more instance(s)..."
 
-            if echo "$RESULT" | grep -q "Out of host capacity\|InternalError"; then
-              echo "No capacity in $AD"
-            else
-              echo "========================================="
-              echo "  INSTANCE CREATED SUCCESSFULLY!"
-              echo "========================================="
-              echo "$RESULT"
-              echo "-----------------------------------------"
-              echo "Check OCI Console for the public IP."
-              echo "SSH: ssh -i oci_key ubuntu@<public-ip>"
-              SUCCESS=true
-              break
+          for i in $(seq 1 $NEEDED); do
+            NEXT=$((CURRENT + i))
+            NAME="socks5-oci-${NEXT}"
+            echo "--- Creating $NAME ---"
+            CREATED=false
+            for AD in "RIZS:US-CHICAGO-1-AD-1" "RIZS:US-CHICAGO-1-AD-2" "RIZS:US-CHICAGO-1-AD-3"; do
+              echo "$(date) — trying $AD for $NAME..."
+              RESULT=$(oci compute instance launch \
+                --availability-domain "$AD" \
+                --compartment-id "${{ secrets.OCI_TENANCY }}" \
+                --shape "VM.Standard.A1.Flex" \
+                --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+                --image-id "${{ secrets.OCI_IMG }}" \
+                --subnet-id "${{ secrets.OCI_SUBNET }}" \
+                --assign-public-ip true \
+                --display-name "$NAME" \
+                --ssh-authorized-keys-file <(echo "${{ secrets.OCI_SSH_KEY }}") 2>&1) || true
+
+              if echo "$RESULT" | grep -q "Out of host capacity\|InternalError"; then
+                echo "No capacity in $AD"
+              else
+                echo "========================================="
+                echo "  $NAME CREATED SUCCESSFULLY!"
+                echo "========================================="
+                echo "$RESULT"
+                CREATED=true
+                break
+              fi
+            done
+            if [ "$CREATED" = false ]; then
+              echo "All ADs full for $NAME — will retry in 10 minutes."
             fi
           done
 
-          if [ "$SUCCESS" = false ]; then
-            echo "All ADs out of capacity — will retry in 10 minutes."
-          fi
-
-      - name: Already running
-        if: steps.check.outputs.count != '0' && steps.check.outputs.count != ''
-        run: echo "Instance already exists and is RUNNING. Disable this workflow."
+      - name: All done
+        if: steps.check.outputs.count == '2'
+        run: echo "Both instances running. Disable this workflow."
