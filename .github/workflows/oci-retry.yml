@@ -33,12 +33,7 @@ jobs:
           RAW=$(oci compute instance list \
             --compartment-id "${{ secrets.OCI_TENANCY }}" \
             --lifecycle-state RUNNING 2>/dev/null || echo '{"data":[]}')
-          COUNT=$(echo "$RAW" | python3 -c "
-import sys, json
-d = json.loads(sys.stdin.read())
-socks = [i for i in d.get('data', []) if i.get('display-name','').startswith('oraclecloud6gb')]
-print(len(socks))
-" 2>/dev/null || echo "0")
+          COUNT=$(echo "$RAW" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(len([i for i in d.get('data',[]) if i.get('display-name','').startswith('oraclecloud6gb')]))" 2>/dev/null || echo "0")
           COUNT=${COUNT:-0}
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "Running SOCKS5 instances: $COUNT / 2 target"
