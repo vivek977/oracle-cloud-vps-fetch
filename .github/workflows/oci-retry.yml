@@ -54,7 +54,7 @@ jobs:
               --subnet-id "${{ secrets.OCI_SUBNET }}" \
               --assign-public-ip true \
               --display-name "socks5-oci-1" \
-              --ssh-authorized-keys-file <(echo "${{ secrets.OCI_SSH_KEY }}") 2>&1)
+              --ssh-authorized-keys-file <(echo "${{ secrets.OCI_SSH_KEY }}") 2>&1) || true
 
             if echo "$RESULT" | grep -q "Out of host capacity\|InternalError"; then
               echo "No capacity in $AD"
