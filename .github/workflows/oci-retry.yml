@@ -68,7 +68,7 @@ jobs:
                 --display-name "$NAME" \
                 --ssh-authorized-keys-file <(echo "${{ secrets.OCI_SSH_KEY }}") 2>&1) || true
 
-              if echo "$RESULT" | grep -q "Out of host capacity\|InternalError"; then
+              if echo "$RESULT" | grep -q "Out of host capacity\|InternalError\|TooManyRequests"; then
                 echo "No capacity in $AD"
               else
                 echo "========================================="
@@ -81,6 +81,9 @@ jobs:
             done
             if [ "$CREATED" = false ]; then
               echo "All ADs full for $NAME — will retry in 10 minutes."
+            else
+              echo "Waiting 90s before next instance to avoid rate limit..."
+              sleep 90
             fi
           done
 
